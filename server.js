@@ -26,10 +26,11 @@ app.post("/api/resend",me,(req,res)=>{const u=db.prepare("SELECT email,verified,
  if(u.verified)return res.json({ok:1});if(Date.now()-(resent[req.uid]||0)<60000)return res.status(429).json({error:"Wait a minute before resending"});
  resent[req.uid]=Date.now();sendVerify(req,u.email,u.vtoken);res.json({ok:1})});
 app.post("/api/signup",(req,res)=>{const {email,password}=req.body||{};
- if(!/.+@.+\..+/.test(email||"")||(password||"").length<8)return res.status(400).json({error:"Valid email and 8+ char password required"});
+ if(!MAIL_KEY&&process.env.ALLOW_UNVERIFIED!=="1")return res.status(503).json({error:"Email system is not set up yet"});
+ if(!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email||"")||(password||"").length<8)return res.status(400).json({error:"Valid email and 8+ char password required"});
  const ip=req.headers["x-forwarded-for"]||req.ip;
  if(db.prepare("SELECT COUNT(*) c FROM users WHERE ip=?").get(ip).c>=2)return res.status(429).json({error:"Too many accounts from this network"});
- try{const vt=crypto.randomBytes(20).toString("hex"),auto=MAIL_KEY?0:1;const r=db.prepare("INSERT INTO users(email,pw,ip,ts,verified,vtoken) VALUES(?,?,?,?,?,?)").run(email.toLowerCase(),bcrypt.hashSync(password,10),ip,Date.now(),auto,vt);login(res,r.lastInsertRowid);if(!auto)sendVerify(req,email.toLowerCase(),vt);res.json({ok:1})}
+ try{const vt=crypto.randomBytes(20).toString("hex"),auto=(!MAIL_KEY&&process.env.ALLOW_UNVERIFIED==="1")?1:0;const r=db.prepare("INSERT INTO users(email,pw,ip,ts,verified,vtoken) VALUES(?,?,?,?,?,?)").run(email.toLowerCase(),bcrypt.hashSync(password,10),ip,Date.now(),auto,vt);login(res,r.lastInsertRowid);if(!auto)sendVerify(req,email.toLowerCase(),vt);res.json({ok:1})}
  catch(e){res.status(400).json({error:"Email already registered"})}});
 app.post("/api/login",(req,res)=>{const u=db.prepare("SELECT * FROM users WHERE email=?").get(((req.body||{}).email||"").toLowerCase());
  if(!u||!bcrypt.compareSync((req.body||{}).password||"",u.pw))return res.status(400).json({error:"Wrong email or password"});login(res,u.id);res.json({ok:1})});
