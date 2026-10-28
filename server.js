@@ -1,7 +1,7 @@
 // Meridian: CPX Research publisher site. Run: npm i && node server.js (env vars in .env.example)
 const express=require("express"),{DatabaseSync}=require("node:sqlite"),bcrypt=require("bcryptjs"),crypto=require("crypto"),cp=require("cookie-parser");
 const {CPX_APP_ID,CPX_SECRET,PORT=3000}=process.env,SHARE=parseFloat(process.env.USER_SHARE||"0.5");
-const MAIL_KEY=process.env.RESEND_API_KEY,MAIL_FROM=process.env.MAIL_FROM||"Meridian <onboarding@resend.dev>";
+const GMAIL_USER=process.env.GMAIL_USER,GMAIL_PASS=(process.env.GMAIL_APP_PASSWORD||"").replace(/\s/g,""),MAIL_KEY=process.env.RESEND_API_KEY||(GMAIL_USER&&GMAIL_PASS?"gmail":undefined),MAIL_FROM=process.env.MAIL_FROM||"Meridian <onboarding@resend.dev>";
 if(!CPX_APP_ID||!CPX_SECRET){console.error("Set CPX_APP_ID and CPX_SECRET");process.exit(1)}
 const db=new DatabaseSync(process.env.DB_PATH||"meridian.db");
 const txn=f=>{db.exec("BEGIN");try{f();db.exec("COMMIT")}catch(e){db.exec("ROLLBACK");throw e}};
@@ -17,6 +17,7 @@ const me=(req,res,next)=>{const s=db.prepare("SELECT uid FROM sessions WHERE tok
 const login=(res,uid)=>{const t=crypto.randomBytes(24).toString("hex");db.prepare("INSERT INTO sessions VALUES(?,?)").run(t,uid);res.cookie("t",t,{httpOnly:true,sameSite:"lax",maxAge:30*864e5})};
 const resent={};
 const sendVerify=(req,to,vt)=>{if(!MAIL_KEY)return;const link=(process.env.BASE_URL||req.protocol+"://"+req.get("host"))+"/verify?token="+vt;
+ if(GMAIL_USER&&GMAIL_PASS){require("nodemailer").createTransport({service:"gmail",auth:{user:GMAIL_USER,pass:GMAIL_PASS}}).sendMail({from:"Meridian <"+GMAIL_USER+">",to,subject:"Confirm your email",html:`<p>Welcome to Meridian Insights.</p><p><a href="${link}">Confirm my email</a></p>`}).catch(e=>console.error("mail error",e.message));return}
  fetch("https://api.resend.com/emails",{method:"POST",headers:{Authorization:"Bearer "+MAIL_KEY,"Content-Type":"application/json"},
  body:JSON.stringify({from:MAIL_FROM,to:[to],subject:"Confirm your email",html:`<p>Welcome to Meridian Insights.</p><p><a href="${link}">Confirm my email</a></p>`})})
  .then(r=>{if(!r.ok)r.text().then(t=>console.error("mail fail",t))}).catch(e=>console.error("mail error",e.message))};
