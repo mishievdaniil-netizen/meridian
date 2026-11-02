@@ -16,8 +16,8 @@ const me=(req,res,next)=>{const s=db.prepare("SELECT uid FROM sessions WHERE tok
  if(!s)return res.status(401).json({error:"login"});req.uid=s.uid;next()};
 const login=(res,uid)=>{const t=crypto.randomBytes(24).toString("hex");db.prepare("INSERT INTO sessions VALUES(?,?)").run(t,uid);res.cookie("t",t,{httpOnly:true,sameSite:"lax",maxAge:30*864e5})};
 const resent={};
-const sendVerify=(req,to,vt)=>{if(!MAIL_KEY)return;const link=(process.env.BASE_URL||req.protocol+"://"+req.get("host"))+"/verify?token="+vt;
- if(GMAIL_USER&&GMAIL_PASS){require("nodemailer").createTransport({service:"gmail",auth:{user:GMAIL_USER,pass:GMAIL_PASS}}).sendMail({from:"Meridian <"+GMAIL_USER+">",to,subject:"Confirm your email",html:`<p>Welcome to Meridian Insights.</p><p><a href="${link}">Confirm my email</a></p>`}).catch(e=>console.error("mail error",e.message));return}
+const sendVerify=(req,to,vt)=>{if(!MAIL_KEY)return;console.log("sending verify mail");const link=(process.env.BASE_URL||req.protocol+"://"+req.get("host"))+"/verify?token="+vt;
+ if(GMAIL_USER&&GMAIL_PASS){require("nodemailer").createTransport({service:"gmail",auth:{user:GMAIL_USER,pass:GMAIL_PASS}}).sendMail({from:"Meridian <"+GMAIL_USER+">",to,subject:"Confirm your email",html:`<p>Welcome to Meridian Insights.</p><p><a href="${link}">Confirm my email</a></p>`}).then(()=>console.log("mail sent")).catch(e=>console.error("mail error",e.message));return}
  fetch("https://api.resend.com/emails",{method:"POST",headers:{Authorization:"Bearer "+MAIL_KEY,"Content-Type":"application/json"},
  body:JSON.stringify({from:MAIL_FROM,to:[to],subject:"Confirm your email",html:`<p>Welcome to Meridian Insights.</p><p><a href="${link}">Confirm my email</a></p>`})})
  .then(r=>{if(!r.ok)r.text().then(t=>console.error("mail fail",t))}).catch(e=>console.error("mail error",e.message))};
@@ -27,10 +27,11 @@ app.post("/api/resend",me,(req,res)=>{const u=db.prepare("SELECT email,verified,
  if(u.verified)return res.json({ok:1});if(Date.now()-(resent[req.uid]||0)<60000)return res.status(429).json({error:"Wait a minute before resending"});
  resent[req.uid]=Date.now();sendVerify(req,u.email,u.vtoken);res.json({ok:1})});
 app.post("/api/signup",(req,res)=>{const {email,password}=req.body||{};
+ if(!(req.body||{}).agree)return res.status(400).json({error:"You must be 18+ and accept the Terms and Privacy Policy"});
  if(!MAIL_KEY&&process.env.ALLOW_UNVERIFIED!=="1")return res.status(503).json({error:"Email system is not set up yet"});
  if(!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email||"")||(password||"").length<8)return res.status(400).json({error:"Valid email and 8+ char password required"});
  const ip=req.headers["x-forwarded-for"]||req.ip;
- if(db.prepare("SELECT COUNT(*) c FROM users WHERE ip=?").get(ip).c>=2)return res.status(429).json({error:"Too many accounts from this network"});
+ if(db.prepare("SELECT COUNT(*) c FROM users WHERE ip=?").get(ip).c>=(parseInt(process.env.MAX_ACCTS_PER_IP)||10))return res.status(429).json({error:"Too many accounts from this network"});
  try{const vt=crypto.randomBytes(20).toString("hex"),auto=(!MAIL_KEY&&process.env.ALLOW_UNVERIFIED==="1")?1:0;const r=db.prepare("INSERT INTO users(email,pw,ip,ts,verified,vtoken) VALUES(?,?,?,?,?,?)").run(email.toLowerCase(),bcrypt.hashSync(password,10),ip,Date.now(),auto,vt);login(res,r.lastInsertRowid);if(!auto)sendVerify(req,email.toLowerCase(),vt);res.json({ok:1})}
  catch(e){res.status(400).json({error:"Email already registered"})}});
 app.post("/api/login",(req,res)=>{const u=db.prepare("SELECT * FROM users WHERE email=?").get(((req.body||{}).email||"").toLowerCase());
@@ -38,7 +39,7 @@ app.post("/api/login",(req,res)=>{const u=db.prepare("SELECT * FROM users WHERE 
 app.get("/api/me",me,(req,res)=>{const u=db.prepare("SELECT id,email,balance,earned,verified FROM users WHERE id=?").get(req.uid);
  // ASSUMPTION: verify exact wall URL and hash formula in your CPX dashboard docs
  const hash=md5(u.id+"-"+CPX_SECRET);
- res.json({...u,wall:!u.verified?null:`https://offers.cpx-research.com/index.php?app_id=${CPX_APP_ID}&ext_user_id=${u.id}&secure_hash=${hash}&email=${encodeURIComponent(u.email)}`,
+ res.json({...u,wall:!u.verified?null:`https://offers.cpx-research.com/index.php?app_id=${CPX_APP_ID}&ext_user_id=${u.id}&secure_hash=${hash}`,
   tx:db.prepare("SELECT gross,credit,status,ts FROM tx WHERE uid=? ORDER BY ts DESC LIMIT 20").all(u.id),
   payouts:db.prepare("SELECT amount,paypal,status,ts FROM payouts WHERE uid=? ORDER BY ts DESC").all(u.id),share:SHARE})});
 // CPX postback. Set in CPX dashboard: https://YOURDOMAIN/postback?status={status}&trans_id={trans_id}&user_id={user_id}&amount_usd={amount_usd}&hash={secure_hash}
